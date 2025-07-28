@@ -1,86 +1,45 @@
 import streamlit as st
 import openai
+import os
 
-# --- Streamlit page config ---
-st.set_page_config(page_title="Smart Chatbot", page_icon="🤖", layout="centered")
+# Load API key from Streamlit Secrets
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-# --- Styling ---
-st.markdown("""
-    <style>
-    .stChatMessage {
-        background-color: #f0f2f6;
-        padding: 12px 16px;
-        border-radius: 12px;
-        margin-bottom: 10px;
-        max-width: 85%;
-    }
-    .user-message {
-        background-color: #DCF8C6;
-        margin-left: auto;
-        text-align: right;
-    }
-    .ai-message {
-        background-color: #F1F0F0;
-        margin-right: auto;
-        text-align: left;
-    }
-    .chat-container {
-        height: 400px;
-        overflow-y: auto;
-        padding: 10px;
-        border: 1px solid #ccc;
-        border-radius: 10px;
-        margin-bottom: 15px;
-        background-color: #fff;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# --- Page Config ---
+st.set_page_config(page_title="Smart Chatbot", page_icon="💬", layout="centered")
 
-# --- Title ---
+# --- App Title ---
 st.title("🤖 Smart Chatbot")
-st.subheader("Talk to an intelligent assistant that responds with purpose.")
+st.caption("Talk to an intelligent bot that understands and responds contextually.")
 
-# --- Initialize session state ---
+# --- Initialize Session State ---
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = [
+        {"role": "system", "content": "You are a helpful assistant."}
+    ]
 
-# --- OpenAI Setup ---
-openai.api_key = st.secrets["OPENAI_API_KEY"]  # Securely stored in Streamlit Cloud
+# --- Chat Input ---
+user_input = st.text_input("You:", placeholder="Type your message here...")
 
-def get_gpt_response(prompt):
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",  # or "gpt-4" if available
-            messages=[
-                {"role": "system", "content": "You are a smart and helpful assistant."},
-                *st.session_state.messages,
-                {"role": "user", "content": prompt}
-            ]
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        return f"⚠️ Error: {str(e)}"
-
-# --- Chat Display ---
-chat_container = st.container()
-with chat_container:
-    st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-    for msg in st.session_state.messages:
-        class_name = "user-message" if msg["role"] == "user" else "ai-message"
-        st.markdown(f'<div class="stChatMessage {class_name}">{msg["content"]}</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# --- User Input ---
-user_input = st.text_input("Your Message", placeholder="Ask anything and hit Enter...")
-
+# --- Chat Response Logic ---
 if user_input:
-    # Add user input to history
     st.session_state.messages.append({"role": "user", "content": user_input})
 
-    # Get response from GPT
-    ai_reply = get_gpt_response(user_input)
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=st.session_state.messages
+        )
 
-    # Add assistant reply to history
-    st.session_state.messages.append({"role": "assistant", "content": ai_reply})
+        reply = response.choices[0].message["content"]
+        st.session_state.messages.append({"role": "assistant", "content": reply})
 
-    st.experimental_rerun()
+    except Exception as e:
+        st.error("Failed to get response from OpenAI. Check your API key and try again.")
+        st.stop()
+
+# --- Display Chat History ---
+for message in st.session_state.messages[1:]:
+    is_user = message["role"] == "user"
+    with st.chat_message("user" if is_user else "assistant"):
+        st.write(message["content"])
