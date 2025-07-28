@@ -4,8 +4,10 @@ import json
 import os
 import datetime
 
-# ✅ API key
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+# ✅ New OpenAI client (v1.0+)
+from openai import OpenAI
+
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # ✅ Page config
 st.set_page_config(page_title="🤖 Smart Python Chatbot", layout="centered")
@@ -37,23 +39,23 @@ for msg in st.session_state.messages[1:]:
     else:
         st.markdown(f"🤖 **Bot:** {msg['content']}")
 
-# ✅ Text input
+# ✅ User input
 user_input = st.text_input("💬 Type your message here:", key="input")
 
-# ✅ On submit
+# ✅ Handle input and response
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
 
     with st.spinner("🤖 Thinking..."):
         try:
-            response = openai.ChatCompletion.create(
+            response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=st.session_state.messages,
                 temperature=0.7,
                 max_tokens=500,
             )
-            bot_reply = response.choices[0].message["content"]
-            st.session_state.messages.append({"role": "assistant", "content": bot_reply})
+            reply = response.choices[0].message.content
+            st.session_state.messages.append({"role": "assistant", "content": reply})
             st.experimental_rerun()
         except Exception as e:
             st.error(f"❌ Error: {e}")
@@ -67,7 +69,7 @@ if st.button("💾 Download Chat (.txt & .json)"):
     st.download_button("📄 TXT", chat_text, "chat.txt")
     st.download_button("🧾 JSON", json.dumps(history, indent=2), "chat.json")
 
-# ✅ Save to file (local memory)
+# ✅ Save to local file
 def save_chat_to_file():
     folder = "chat_logs"
     os.makedirs(folder, exist_ok=True)
