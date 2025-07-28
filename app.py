@@ -1,45 +1,98 @@
 import streamlit as st
 import openai
+import json
 import os
+import datetime
+import speech_recognition as sr
 
-# Load API key from Streamlit Secrets
+# ✅ Set your OpenAI API key from secrets
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-# --- Page Config ---
-st.set_page_config(page_title="Smart Chatbot", page_icon="💬", layout="centered")
+# ✅ Set page configuration
+st.set_page_config(page_title="🤖 Smart Python Chatbot", layout="centered")
 
-# --- App Title ---
-st.title("🤖 Smart Chatbot")
-st.caption("Talk to an intelligent bot that understands and responds contextually.")
+st.title("🤖 Smart Python Chatbot")
+st.markdown("Chat with a smart assistant that remembers, speaks, stores, and adapts!")
 
-# --- Initialize Session State ---
+# ✅ Persona selector
+persona = st.selectbox("🧱 Choose Assistant Persona", [
+    "Helpful Assistant",
+    "Motivational Coach",
+    "Tech Expert",
+    "Comedian 🤡",
+])
+
+# ✅ Set system prompt by persona
 if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "system", "content": "You are a helpful assistant."}
-    ]
+    system_msg = {
+        "Helpful Assistant": "You are a helpful assistant.",
+        "Motivational Coach": "You are a positive coach who inspires users.",
+        "Tech Expert": "You are a Python coding assistant. Explain and fix code clearly.",
+        "Comedian 🤡": "You are a funny chatbot who replies with jokes and humor.",
+    }[persona]
+    st.session_state.messages = [{"role": "system", "content": system_msg}]
 
-# --- Chat Input ---
-user_input = st.text_input("You:", placeholder="Type your message here...")
+# ✅ Show chat history
+for msg in st.session_state.messages[1:]:
+    if msg["role"] == "user":
+        st.markdown(f"🧑 **You:** {msg['content']}")
+    else:
+        st.markdown(f"🤖 **Bot:** {msg['content']}")
 
-# --- Chat Response Logic ---
+# ✅ Text input
+user_input = st.text_input("💬 Type your message here:", key="input")
+
+# ✅ Voice input
+if st.button("🎤 Use Voice Input"):
+    recognizer = sr.Recognizer()
+    with sr.Microphone() as source:
+        st.info("Speak now...")
+        audio = recognizer.listen(source)
+        try:
+            voice_text = recognizer.recognize_google(audio)
+            user_input = voice_text
+            st.success(f"You said: {voice_text}")
+        except sr.UnknownValueError:
+            st.error("Sorry, could not understand.")
+        except sr.RequestError as e:
+            st.error(f"API error: {e}")
+
+# ✅ On user message
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
 
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=st.session_state.messages
-        )
+    with st.spinner("🤖 Thinking..."):
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",  # or "gpt-4"
+                messages=st.session_state.messages,
+                temperature=0.7,
+                max_tokens=500,
+            )
+            bot_reply = response.choices[0].message["content"]
+            st.session_state.messages.append({"role": "assistant", "content": bot_reply})
+            st.experimental_rerun()
+        except Exception as e:
+            st.error(f"❌ Error: {e}")
 
-        reply = response.choices[0].message["content"]
-        st.session_state.messages.append({"role": "assistant", "content": reply})
+# ✅ Download chat buttons
+if st.button("💾 Download Chat (.txt & .json)"):
+    history = st.session_state.messages[1:]
+    chat_text = "\n".join(
+        f"You: {m['content']}" if m["role"] == "user" else f"Bot: {m['content']}" for m in history
+    )
+    st.download_button("📄 TXT", chat_text, "chat.txt")
+    st.download_button("🧾 JSON", json.dumps(history, indent=2), "chat.json")
 
-    except Exception as e:
-        st.error("Failed to get response from OpenAI. Check your API key and try again.")
-        st.stop()
+# ✅ Save to file (long-term memory)
+def save_chat_to_file():
+    folder = "chat_logs"
+    os.makedirs(folder, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    filepath = os.path.join(folder, f"chat_{timestamp}.json")
+    with open(filepath, "w") as f:
+        json.dump(st.session_state.messages, f, indent=2)
 
-# --- Display Chat History ---
-for message in st.session_state.messages[1:]:
-    is_user = message["role"] == "user"
-    with st.chat_message("user" if is_user else "assistant"):
-        st.write(message["content"])
+if st.button("🧠 Save Chat to Local File"):
+    save_chat_to_file()
+    st.success("Chat saved locally!")
