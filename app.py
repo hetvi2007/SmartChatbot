@@ -1,8 +1,8 @@
 import streamlit as st
-import openai
+import requests
 
 # Load your API key securely from Streamlit Secrets
-openai.api_key = st.secrets["openai"]["api_key"]
+GROQ_API_KEY = st.secrets["groq"]["api_key"]
 
 st.set_page_config(page_title="Smart Chatbot", page_icon="🤖")
 st.title("💬 Your Smart Python Chatbot")
@@ -25,12 +25,21 @@ if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
 
     try:
-        # Use Chat Completions (OpenAI 1.x)
-        response = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=st.session_state.messages
+        # Groq-compatible OpenAI API call
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "mixtral-8x7b-32768",  # or "llama2-70b-4096", etc.
+                "messages": st.session_state.messages,
+                "temperature": 0.7
+            }
         )
-        reply = response.choices[0].message.content
+        result = response.json()
+        reply = result["choices"][0]["message"]["content"]
         st.chat_message("assistant").write(reply)
         st.session_state.messages.append({"role": "assistant", "content": reply})
 
