@@ -1,31 +1,35 @@
 import streamlit as st
 import requests
-from werkzeug.security import check_password_hash
 import json
+from werkzeug.security import check_password_hash
+from datetime import datetime
 import os
 
-# -------- Configuration --------
-st.set_page_config(page_title="Smart Chatbot", page_icon="💬")
-st.markdown("<h1 style='text-align: center;'>💬 Smart Chatbot</h1>", unsafe_allow_html=True)
-
-API_KEY = st.secrets["groq"]["api_key"]
-API_URL = "https://api.groq.com/openai/v1/chat/completions"
-MODEL_NAME = "mixtral-8x7b-32768"  # Or another valid Groq model
-
-# -------- Dummy Users (Hash your passwords for production) --------
+# -------------------------------
+# 🔐 User login credentials
 USERS = {
-    "user@example.com": "pbkdf2:sha256:260000$4D...hashed_pass_here"
+    "user@example.com": "pbkdf2:sha256:260000$abc$your_hashed_password_here"
 }
-# Optional: allow skipping login
-ALLOW_SKIP = True
+ALLOW_SKIP = True  # allow skip login
 
-# -------- Login State --------
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-    st.session_state.user_email = None
-    st.session_state.allow_chat = False
+# -------------------------------
+# 🔑 API & Settings
+GROQ_API_KEY = st.secrets["groq"]["api_key"]
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+MODEL = "mixtral-8x7b-32768"
 
-# -------- Login Page --------
+# -------------------------------
+# 📁 Setup folders
+if not os.path.exists("chats"):
+    os.makedirs("chats")
+
+# -------------------------------
+# 💬 App UI
+st.set_page_config(page_title="Smart Chatbot", page_icon="💬")
+st.title("💬 Smart Chatbot")
+
+# -------------------------------
+# 👤 Login system
 def login():
     st.subheader("🔐 Login to Smart Chatbot")
     email = st.text_input("Email")
@@ -37,7 +41,7 @@ def login():
             st.session_state.user_email = email
             st.session_state.allow_chat = True
             st.success("✅ Logged in!")
-            st.experimental_rerun()
+            st.stop()
         else:
             st.error("Invalid email or password.")
 
@@ -47,80 +51,70 @@ def login():
             st.session_state.user_email = "guest"
             st.session_state.allow_chat = True
             st.warning("⚠️ Logged in as guest. Chat history won't be saved.")
-            st.experimental_rerun()
+            st.stop()
 
-# -------- Chat History File --------
-def get_chat_file():
-    return f"history_{st.session_state.user_email}.json"
+# -------------------------------
+# 🧠 Chat function
+def chat_with_groq(messages):
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    data = {
+        "model": MODEL,
+        "messages": messages
+    }
 
-def save_chat_history(history):
+    try:
+        res = requests.post(GROQ_API_URL, headers=headers, json=data)
+        res.raise_for_status()
+        reply = res.json()["choices"][0]["message"]["content"]
+        return reply
+    except Exception as e:
+        st.error(f"⚠️ Error: {e}")
+        return None
+
+# -------------------------------
+# 💾 Save chat history
+def save_chat(user_email, messages):
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"chats/{user_email}_{timestamp}.json"
+    with open(filename, "w") as f:
+        json.dump(messages, f, indent=2)
+
+# -------------------------------
+# 🧠 Main App
+if "logged_in" not in st.session_state:
+    login()
+
+if st.session_state.get("allow_chat"):
+    if "messages" not in st.session_state:
+        st.session_state.messages = [
+            {"role": "system", "content": "You are a helpful assistant."}
+        ]
+
+    # Chat history selection
+    st.sidebar.button("➕ New Chat", on_click=lambda: st.session_state.pop("messages", None))
     if st.session_state.user_email != "guest":
-        with open(get_chat_file(), "w") as f:
-            json.dump(history, f)
+        history_files = [f for f in os.listdir("chats") if f.startswith(st.session_state.user_email)]
+        selected_history = st.sidebar.selectbox("📜 Chat History", [""] + history_files)
+        if selected_history:
+            with open(os.path.join("chats", selected_history), "r") as f:
+                st.session_state.messages = json.load(f)
 
-def load_chat_history():
-    if st.session_state.user_email != "guest":
-        try:
-            with open(get_chat_file(), "r") as f:
-                return json.load(f)
-        except FileNotFoundError:
-            return []
-    return []
-
-# -------- Groq Chat API Call --------
-def get_groq_response(messages):
-    res = requests.post(
-        API_URL,
-        headers={
-            "Authorization": f"Bearer {API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": MODEL_NAME,
-            "messages": messages,
-            "temperature": 0.7,
-        },
-        timeout=30
-    )
-    res.raise_for_status()
-    return res.json()["choices"][0]["message"]["content"]
-
-# -------- Chat Interface --------
-def chat_interface():
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = load_chat_history()
-
-    # Top controls
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        if st.button("➕ New Chat"):
-            st.session_state.chat_history = []
-            save_chat_history([])
-
-    with col2:
-        if st.session_state.user_email != "guest":
-            search = st.selectbox("📜 Chat History", [f"Chat {i+1}" for i in range(len(st.session_state.chat_history))][::-1])
-    
-    # Show messages
-    for msg in st.session_state.chat_history:
+    # Display chat
+    for msg in st.session_state.messages[1:]:  # skip system
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # User Input
-    prompt = st.chat_input("Ask me anything...")
-    if prompt:
-        st.chat_message("user").markdown(prompt)
-        st.session_state.chat_history.append({"role": "user", "content": prompt})
-        try:
-            response = get_groq_response(st.session_state.chat_history)
-            st.chat_message("assistant").markdown(response)
-            st.session_state.chat_history.append({"role": "assistant", "content": response})
-            save_chat_history(st.session_state.chat_history)
-        except Exception as e:
-            st.error(f"⚠️ Error: {e}")
-
-# -------- Main App Flow --------
-if not st.session_state.logged_in:
-    login()
-elif st.session_state.allow_chat:
-    chat_interface()
+    # Chat input
+    user_input = st.chat_input("Ask me anything...")
+    if user_input:
+        st.chat_message("user").markdown(user_input)
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        reply = chat_with_groq(st.session_state.messages)
+        if reply:
+            st.chat_message("assistant").markdown(reply)
+            st.session_state.messages.append({"role": "assistant", "content": reply})
+            if st.session_state.user_email != "guest":
+                save_chat(st.session_state.user_email, st.session_state.messages)
