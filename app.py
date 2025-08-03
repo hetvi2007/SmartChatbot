@@ -1,116 +1,90 @@
 import streamlit as st
-import os
-import json
-import requests
-from werkzeug.security import check_password_hash
+from openai import OpenAI
+from werkzeug.security import check_password_hash, generate_password_hash
 
-# -------------------- CONFIG --------------------
-st.set_page_config(page_title="Smart Chatbot", page_icon="💬", layout="centered")
+# Load API key securely
+GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 
-# Your Groq API Key
-GROQ_API_KEY = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY") or "gsk_xxx_your_real_key_here"
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "mixtral-8x7b-32768"
+# Setup client
+client = OpenAI(
+    api_key=GROQ_API_KEY,
+    base_url="https://api.groq.com/openai/v1"
+)
 
-# Simple users database
+# ---------- Login Config ----------
 USERS = {
-    "test@example.com": {
-        "password_hash": "pbkdf2:sha256:260000$TestKey$1a77d49f25cb5e...",  # Replace with real hashed password
-        "name": "Test User"
-    }
+    "admin": generate_password_hash("admin123"),
+    "guest": generate_password_hash("guest123"),
 }
 
-# -------------------- AUTH --------------------
 def login():
-    st.title("🔐 Login to Smart Chatbot")
-
-    if "skip_login" in st.session_state and st.session_state.skip_login:
-        st.info("⚠️ Logged in as guest. Chat history won't be saved.")
-        return
-
-    email = st.text_input("Email")
-    password = st.text_input("Password", type="password")
-
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        if st.button("Login"):
-            user = USERS.get(email)
-            if user and check_password_hash(user["password_hash"], password):
+    with st.sidebar:
+        st.subheader("🔐 Login or Skip")
+        choice = st.radio("Choose an option:", ["Login", "Continue without login"])
+        
+        if choice == "Login":
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            if st.button("Login"):
+                if username in USERS and check_password_hash(USERS[username], password):
+                    st.session_state.logged_in = True
+                    st.session_state.username = username
+                    st.success(f"Welcome back, {username}!")
+                    st.experimental_rerun()
+                else:
+                    st.error("Invalid credentials.")
+        else:
+            if st.button("Skip Login"):
                 st.session_state.logged_in = True
-                st.session_state.email = email
-                st.rerun()
-            else:
-                st.error("Invalid email or password.")
-    with col2:
-        if st.button("Skip Login"):
-            st.session_state.skip_login = True
-            st.rerun()
+                st.session_state.username = "Guest"
+                st.experimental_rerun()
 
-# -------------------- RESET --------------------
-def reset_login():
-    if st.sidebar.button("🔁 Reset Login"):
-        for key in ["logged_in", "skip_login", "email"]:
-            st.session_state.pop(key, None)
-        st.rerun()
+# ---------- Main App ----------
 
-# -------------------- GROQ CHAT --------------------
-def ask_groq(prompt, history):
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    payload = {
-        "model": GROQ_MODEL,
-        "messages": history + [{"role": "user", "content": prompt}]
-    }
-
-    response = requests.post(GROQ_API_URL, headers=headers, json=payload)
-
-    if response.status_code == 200:
-        data = response.json()
-        return data['choices'][0]['message']['content']
-    else:
-        st.error(f"⚠️ Error: {response.status_code} - {response.text}")
-        return None
-
-# -------------------- UI --------------------
-def main_ui():
+def main_chat():
+    st.set_page_config(page_title="Smart Chatbot", page_icon="🤖")
     st.title("💬 Smart Chatbot")
 
-    reset_login()  # Sidebar reset button
-
-    # Load chat history from session or storage
+    # Start chat history
     if "messages" not in st.session_state:
-        st.session_state.messages = []
+        st.session_state.messages = [
+            {"role": "system", "content": "You are a helpful and smart assistant."}
+        ]
 
-    # Sidebar history
+    # Sidebar controls
     with st.sidebar:
-        st.button("➕ New Chat", on_click=lambda: st.session_state.update({"messages": []}))
-        if "email" in st.session_state:
-            st.markdown("### 📜 Chat History")
-            # Placeholder for future file-based history
+        st.write(f"👤 Logged in as: `{st.session_state.username}`")
+        if st.button("🆕 Start New Chat"):
+            st.session_state.messages = [
+                {"role": "system", "content": "You are a helpful and smart assistant."}
+            ]
+            st.experimental_rerun()
 
-    # Display messages
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+    # Display chat history
+    for msg in st.session_state.messages[1:]:
+        st.chat_message(msg["role"]).write(msg["content"])
 
-    # User input
-    prompt = st.chat_input("Ask me anything…")
-    if prompt:
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+    # Input
+    user_input = st.chat_input("Ask me anything...")
+    if user_input:
+        st.chat_message("user").write(user_input)
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        try:
+            response = client.chat.completions.create(
+                model="mixtral-8x7b-32768",
+                messages=st.session_state.messages
+            )
+            reply = response.choices[0].message.content
+            st.chat_message("assistant").write(reply)
+            st.session_state.messages.append({"role": "assistant", "content": reply})
+        except Exception as e:
+            st.error(f"⚠️ Error: {e}")
 
-        response = ask_groq(prompt, st.session_state.messages[:-1])
-        if response:
-            st.session_state.messages.append({"role": "assistant", "content": response})
-            with st.chat_message("assistant"):
-                st.markdown(response)
+# ---------- Launcher ----------
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
 
-# -------------------- RUN APP --------------------
-if "logged_in" not in st.session_state and "skip_login" not in st.session_state:
+if not st.session_state.logged_in:
     login()
 else:
-    main_ui()
+    main_chat()
