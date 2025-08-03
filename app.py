@@ -3,11 +3,30 @@ import requests
 import os
 import json
 from datetime import datetime
+from werkzeug.security import check_password_hash
 
 # PAGE CONFIG
-st.set_page_config(page_title="Smart Chatbot", page_icon="🤖", layout="centered")
+st.set_page_config(page_title="Smart Chatbot", page_icon="🤖")
 
-# ✅ Secrets
+# Load users from file
+def load_users():
+    try:
+        with open("users.json", "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+# ---------------------
+# SESSION STATE INIT
+# ---------------------
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "email" not in st.session_state:
+    st.session_state.email = ""
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# API key from secrets
 GROQ_API_KEY = st.secrets["groq"]["api_key"]
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL = "mixtral-8x7b-32768"
@@ -16,31 +35,23 @@ MODEL = "mixtral-8x7b-32768"
 os.makedirs("chat_history", exist_ok=True)
 
 # ---------------------------
-# SESSION STATE INIT
-# ---------------------------
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-if "email" not in st.session_state:
-    st.session_state.email = ""
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-# ---------------------------
 # LOGIN PAGE
 # ---------------------------
 def login():
     st.title("🔐 Login to Smart Chatbot")
+    users = load_users()
 
     email = st.text_input("Email")
     password = st.text_input("Password", type="password")
+
     if st.button("Login"):
-        if email and password:
+        if email in users and check_password_hash(users[email], password):
             st.session_state.logged_in = True
             st.session_state.email = email
-            st.success("✅ Logged in!")
+            st.success("✅ Login successful!")
             st.experimental_rerun()
         else:
-            st.error("Please enter email and password.")
+            st.error("Invalid email or password.")
 
 # ---------------------------
 # SAVE CHAT
@@ -69,9 +80,8 @@ def search_chats(keyword):
 # ---------------------------
 def chatbot_ui():
     st.title("💬 Smart Python Chatbot")
-    st.markdown("You are chatting as: **" + st.session_state.email + "**")
+    st.markdown(f"👤 **User:** {st.session_state.email}")
 
-    # Search
     with st.expander("🔍 Search Past Chats"):
         keyword = st.text_input("Search keyword")
         if keyword:
@@ -79,23 +89,19 @@ def chatbot_ui():
             for fname, line in matches:
                 st.markdown(f"📁 **{fname}**: {line}")
 
-    # New Chat
     if st.button("🆕 New Chat"):
         save_chat()
         st.session_state.messages = []
         st.experimental_rerun()
 
-    # Display past messages
     for msg in st.session_state.messages:
         st.chat_message(msg["role"]).markdown(msg["content"])
 
-    # User input
     user_input = st.chat_input("Say something...")
     if user_input:
         st.chat_message("user").markdown(user_input)
         st.session_state.messages.append({"role": "user", "content": user_input})
 
-        # Groq API call
         try:
             response = requests.post(
                 GROQ_API_URL,
@@ -108,19 +114,17 @@ def chatbot_ui():
                     "messages": st.session_state.messages,
                 }
             )
-
             if response.status_code == 200:
                 reply = response.json()["choices"][0]["message"]["content"]
                 st.chat_message("assistant").markdown(reply)
                 st.session_state.messages.append({"role": "assistant", "content": reply})
             else:
-                st.error("⚠️ API Error: " + response.text)
-
+                st.error(f"⚠️ API Error: {response.text}")
         except Exception as e:
             st.error(f"⚠️ Error: {str(e)}")
 
 # ---------------------------
-# APP START
+# APP RUN
 # ---------------------------
 if st.session_state.logged_in:
     chatbot_ui()
