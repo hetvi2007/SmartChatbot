@@ -1,106 +1,104 @@
 import streamlit as st
-import os
-import json
-from datetime import datetime
 import requests
+import os
+from datetime import datetime
+from werkzeug.security import check_password_hash
 
-# === GET API KEY SECURELY ===
-GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", None)
-GROQ_MODEL = "llama3-8b-8192"
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+# ==== SETUP ====
 
-# === Set Page Config ===
 st.set_page_config(page_title="Smart Chatbot", page_icon="🤖", layout="centered")
-
-# === USER LOGIN ===
-def login():
-    st.session_state.logged_in = True
-    st.success("✅ You are logged in!")
-
-def skip_login():
-    st.session_state.logged_in = True
-    st.session_state.username = "guest"
-
-# === MAIN CHAT FUNCTION ===
-def chat_with_groq(messages):
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": GROQ_MODEL,
-        "messages": messages
-    }
-    response = requests.post(GROQ_URL, headers=headers, json=payload)
-    if response.status_code == 200:
-        return response.json()["choices"][0]["message"]["content"]
-    else:
-        return f"⚠️ Error: {response.status_code} - {response.text}"
-
-# === CHAT HISTORY SAVE ===
-def save_chat(username, history):
-    if not os.path.exists("history"):
-        os.makedirs("history")
-    with open(f"history/{username}_chat.json", "w") as f:
-        json.dump(history, f)
-
-def load_chat(username):
-    try:
-        with open(f"history/{username}_chat.json", "r") as f:
-            return json.load(f)
-    except:
-        return []
-
-# === INIT SESSION ===
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-    st.session_state.username = ""
-
-if not st.session_state.logged_in:
-    st.title("🔐 Login to Smart Chatbot")
-    st.text_input("Enter your username", key="username_input")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🔓 Login"):
-            st.session_state.username = st.session_state.username_input.strip()
-            if st.session_state.username:
-                login()
-    with col2:
-        if st.button("⏭️ Skip Login"):
-            skip_login()
-    st.stop()
-
-# === CHAT UI ===
 st.title("🤖 Smart Chatbot")
 
-if "messages" not in st.session_state:
-    if st.session_state.username != "guest":
-        st.session_state.messages = load_chat(st.session_state.username)
-    else:
-        st.session_state.messages = []
+GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+GROQ_MODEL = "llama3-8b-8192"
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-# === Display Chat Messages ===
+# ==== AUTH ====
+
+def login():
+    st.session_state.authenticated = False
+
+    with st.form("Login"):
+        st.subheader("🔐 Login to continue")
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            login_btn = st.form_submit_button("Login")
+        with col2:
+            skip_btn = st.form_submit_button("Skip Login")
+
+        if login_btn:
+            valid_username = st.secrets["credentials"]["username"]
+            valid_pw_hash = st.secrets["credentials"]["password_hash"]
+
+            if username == valid_username and check_password_hash(valid_pw_hash, password):
+                st.session_state.authenticated = True
+                st.success("✅ Logged in!")
+            else:
+                st.error("❌ Invalid username or password.")
+        elif skip_btn:
+            st.session_state.authenticated = True
+            st.info("⚠️ You skipped login. Some features may be limited.")
+
+if "authenticated" not in st.session_state:
+    login()
+
+if not st.session_state.authenticated:
+    st.stop()
+
+# ==== CHAT INITIALIZE ====
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# ==== CHAT UI ====
+
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# === User Input ===
-user_input = st.chat_input("Type your message...")
-if user_input:
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.markdown(user_input)
+prompt = st.chat_input("Ask me anything...")
 
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            if not GROQ_API_KEY:
-                st.error("❌ Missing GROQ_API_KEY in secrets.toml")
-                st.stop()
-            reply = chat_with_groq(st.session_state.messages)
-            st.markdown(reply)
+if prompt:
+    st.chat_message("user").markdown(prompt)
+    st.session_state.messages.append({"role": "user", "content": prompt})
 
-    st.session_state.messages.append({"role": "assistant", "content": reply})
+    with st.spinner("Thinking..."):
+        try:
+            response = requests.post(
+                GROQ_API_URL,
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": GROQ_MODEL,
+                    "messages": [
+                        {"role": "system", "content": "You are a smart assistant."}
+                    ] + st.session_state.messages
+                },
+                timeout=20
+            )
 
-    # Save history if not guest
-    if st.session_state.username != "guest":
-        save_chat(st.session_state.username, st.session_state.messages)
+            if response.status_code == 200:
+                reply = response.json()["choices"][0]["message"]["content"]
+                st.chat_message("assistant").markdown(reply)
+                st.session_state.messages.append({"role": "assistant", "content": reply})
+            else:
+                st.error(f"⚠️ Error: {response.status_code} - {response.text}")
+        except Exception as e:
+            st.error(f"⚠️ Failed to connect: {str(e)}")
+
+# ==== TOOLBAR ====
+
+with st.sidebar:
+    st.markdown("## ⚙️ Options")
+    if st.button("🧹 New Chat"):
+        st.session_state.messages = []
+        st.experimental_rerun()
+    if st.button("🚪 Logout"):
+        del st.session_state["authenticated"]
+        st.experimental_rerun()
+    st.markdown("---")
+    st.caption("Built with ❤️ using GROQ + Streamlit")
