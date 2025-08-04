@@ -1,102 +1,106 @@
 import streamlit as st
-import requests
-from datetime import datetime
 import os
+import json
+from datetime import datetime
+import requests
 
-# Load API key
-GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+# === GET API KEY SECURELY ===
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", None)
+GROQ_MODEL = "llama3-8b-8192"
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-# ----- LOGIN -----
+# === Set Page Config ===
+st.set_page_config(page_title="Smart Chatbot", page_icon="🤖", layout="centered")
+
+# === USER LOGIN ===
 def login():
-    st.subheader("🔐 Login to Smart Chatbot")
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
+    st.session_state.logged_in = True
+    st.success("✅ You are logged in!")
 
-    col1, col2 = st.columns(2)
-    login_clicked = col1.button("Login")
-    skip_clicked = col2.button("Skip Login")
+def skip_login():
+    st.session_state.logged_in = True
+    st.session_state.username = "guest"
 
-    if login_clicked and username and password:
-        st.session_state["logged_in"] = True
-        st.success(f"Welcome, {username} 👋")
-    elif skip_clicked:
-        st.session_state["logged_in"] = True
-        st.warning("You skipped login!")
+# === MAIN CHAT FUNCTION ===
+def chat_with_groq(messages):
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": messages
+    }
+    response = requests.post(GROQ_URL, headers=headers, json=payload)
+    if response.status_code == 200:
+        return response.json()["choices"][0]["message"]["content"]
+    else:
+        return f"⚠️ Error: {response.status_code} - {response.text}"
 
-# ----- INIT -----
+# === CHAT HISTORY SAVE ===
+def save_chat(username, history):
+    if not os.path.exists("history"):
+        os.makedirs("history")
+    with open(f"history/{username}_chat.json", "w") as f:
+        json.dump(history, f)
+
+def load_chat(username):
+    try:
+        with open(f"history/{username}_chat.json", "r") as f:
+            return json.load(f)
+    except:
+        return []
+
+# === INIT SESSION ===
 if "logged_in" not in st.session_state:
-    st.session_state["logged_in"] = False
-if "messages" not in st.session_state:
-    st.session_state["messages"] = []
-if "search_term" not in st.session_state:
-    st.session_state["search_term"] = ""
+    st.session_state.logged_in = False
+    st.session_state.username = ""
 
-if not st.session_state["logged_in"]:
-    login()
+if not st.session_state.logged_in:
+    st.title("🔐 Login to Smart Chatbot")
+    st.text_input("Enter your username", key="username_input")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔓 Login"):
+            st.session_state.username = st.session_state.username_input.strip()
+            if st.session_state.username:
+                login()
+    with col2:
+        if st.button("⏭️ Skip Login"):
+            skip_login()
     st.stop()
 
-# ----- HEADER -----
-st.set_page_config(page_title="Smart Chatbot", page_icon="🤖")
+# === CHAT UI ===
 st.title("🤖 Smart Chatbot")
 
-# ----- SEARCH -----
-with st.sidebar:
-    st.subheader("🔍 Search Chat")
-    search_input = st.text_input("Search keyword")
-    if search_input:
-        st.session_state.search_term = search_input.lower()
-    if st.button("🔄 Clear Search"):
-        st.session_state.search_term = ""
+if "messages" not in st.session_state:
+    if st.session_state.username != "guest":
+        st.session_state.messages = load_chat(st.session_state.username)
+    else:
+        st.session_state.messages = []
 
-# ----- CHAT HISTORY DISPLAY -----
+# === Display Chat Messages ===
 for msg in st.session_state.messages:
-    content_lower = msg["content"].lower()
-    if not st.session_state.search_term or st.session_state.search_term in content_lower:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-# ----- CHAT INPUT -----
-user_input = st.chat_input("Ask anything...")
-
+# === User Input ===
+user_input = st.chat_input("Type your message...")
 if user_input:
-    st.chat_message("user").markdown(user_input)
     st.session_state.messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
 
-    try:
-        response = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "mixtral-8x7b-32768",  # You can change model here
-                "messages": [{"role": "system", "content": "You are a smart helpful assistant."}] + st.session_state.messages,
-                "temperature": 0.7
-            },
-        )
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            if not GROQ_API_KEY:
+                st.error("❌ Missing GROQ_API_KEY in secrets.toml")
+                st.stop()
+            reply = chat_with_groq(st.session_state.messages)
+            st.markdown(reply)
 
-        result = response.json()
-        reply = result["choices"][0]["message"]["content"]
-        st.chat_message("assistant").markdown(reply)
-        st.session_state.messages.append({"role": "assistant", "content": reply})
+    st.session_state.messages.append({"role": "assistant", "content": reply})
 
-    except Exception as e:
-        st.error(f"⚠️ Error: {e}")
-
-# ----- EXPORT CHAT -----
-def export_chat():
-    chat_file = f"chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-    with open(chat_file, "w", encoding="utf-8") as f:
-        for msg in st.session_state.messages:
-            role = msg["role"].capitalize()
-            f.write(f"{role}: {msg['content']}\n\n")
-    return chat_file
-
-st.sidebar.markdown("---")
-if st.sidebar.button("💾 Export Chat"):
-    file_path = export_chat()
-    st.sidebar.success("Chat exported!")
-    with open(file_path, "rb") as f:
-        st.sidebar.download_button("⬇️ Download Chat", data=f, file_name=file_path)
-
+    # Save history if not guest
+    if st.session_state.username != "guest":
+        save_chat(st.session_state.username, st.session_state.messages)
