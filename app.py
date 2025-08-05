@@ -1,104 +1,87 @@
 import streamlit as st
 import requests
-import os
-from datetime import datetime
-from werkzeug.security import check_password_hash
+import base64
 
-# ==== SETUP ====
-
-st.set_page_config(page_title="Smart Chatbot", page_icon="🤖", layout="centered")
-st.title("🤖 Smart Chatbot")
-
+# Load API key securely
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-GROQ_MODEL = "llama3-8b-8192"
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+STABILITY_API_URL = "https://api.stability.ai/v1/generation/stable-diffusion-v1-5/text-to-image"
 
-# ==== AUTH ====
+# Setup Streamlit
+st.set_page_config(page_title="Smart Chatbot", page_icon="🤖")
+st.title("🤖 Smart Chatbot + 🎨 Image Generator")
 
-def login():
-    st.session_state.authenticated = False
-
-    with st.form("Login"):
-        st.subheader("🔐 Login to continue")
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            login_btn = st.form_submit_button("Login")
-        with col2:
-            skip_btn = st.form_submit_button("Skip Login")
-
-        if login_btn:
-            valid_username = st.secrets["credentials"]["username"]
-            valid_pw_hash = st.secrets["credentials"]["password_hash"]
-
-            if username == valid_username and check_password_hash(valid_pw_hash, password):
-                st.session_state.authenticated = True
-                st.success("✅ Logged in!")
-            else:
-                st.error("❌ Invalid username or password.")
-        elif skip_btn:
-            st.session_state.authenticated = True
-            st.info("⚠️ You skipped login. Some features may be limited.")
-
-if "authenticated" not in st.session_state:
-    login()
-
-if not st.session_state.authenticated:
-    st.stop()
-
-# ==== CHAT INITIALIZE ====
-
+# Initialize chat history
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = [{"role": "system", "content": "You are a helpful assistant."}]
 
-# ==== CHAT UI ====
-
-for msg in st.session_state.messages:
+# Display chat history
+for msg in st.session_state.messages[1:]:  # skip system message
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-prompt = st.chat_input("Ask me anything...")
+# Detect image prompt
+def is_image_prompt(text):
+    keywords = ["draw", "generate image", "create an image", "make a picture", "show me", "visualize"]
+    return any(keyword in text.lower() for keyword in keywords)
 
-if prompt:
-    st.chat_message("user").markdown(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
+# Generate image from Stability AI
+def generate_image(prompt):
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    json_data = {
+        "text_prompts": [{"text": prompt}],
+        "cfg_scale": 8,
+        "height": 512,
+        "width": 512,
+        "samples": 1,
+        "steps": 30
+    }
+    response = requests.post(STABILITY_API_URL, headers=headers, json=json_data)
 
-    with st.spinner("Thinking..."):
-        try:
-            response = requests.post(
-                GROQ_API_URL,
-                headers={
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": GROQ_MODEL,
-                    "messages": [
-                        {"role": "system", "content": "You are a smart assistant."}
-                    ] + st.session_state.messages
-                },
-                timeout=20
-            )
+    if response.status_code == 200:
+        image_data = response.json()["artifacts"][0]["base64"]
+        return image_data
+    else:
+        st.error("Failed to generate image.")
+        return None
 
-            if response.status_code == 200:
-                reply = response.json()["choices"][0]["message"]["content"]
-                st.chat_message("assistant").markdown(reply)
-                st.session_state.messages.append({"role": "assistant", "content": reply})
-            else:
-                st.error(f"⚠️ Error: {response.status_code} - {response.text}")
-        except Exception as e:
-            st.error(f"⚠️ Failed to connect: {str(e)}")
+# Chat input
+user_input = st.chat_input("Say something...")
 
-# ==== TOOLBAR ====
+if user_input:
+    # Show user input
+    with st.chat_message("user"):
+        st.markdown(user_input)
+    st.session_state.messages.append({"role": "user", "content": user_input})
 
-with st.sidebar:
-    st.markdown("## ⚙️ Options")
-    if st.button("🧹 New Chat"):
-        st.session_state.messages = []
-        st.experimental_rerun()
-    if st.button("🚪 Logout"):
-        del st.session_state["authenticated"]
-        st.experimental_rerun()
-    st.markdown("---")
-    st.caption("Built with ❤️ using GROQ + Streamlit")
+    # Image prompt
+    if is_image_prompt(user_input):
+        with st.chat_message("assistant"):
+            st.markdown("🖼 Generating an image for your prompt...")
+            img_data = generate_image(user_input)
+            if img_data:
+                st.image(base64.b64decode(img_data), caption="Generated Image")
+        st.session_state.messages.append({"role": "assistant", "content": "Generated an image above."})
+
+    # Text response (Groq API)
+    else:
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "model": "mixtral-8x7b-32768",
+            "messages": st.session_state.messages,
+            "temperature": 0.7
+        }
+        response = requests.post(GROQ_API_URL, headers=headers, json=data)
+        if response.status_code == 200:
+            reply = response.json()["choices"][0]["message"]["content"]
+            with st.chat_message("assistant"):
+                st.markdown(reply)
+            st.session_state.messages.append({"role": "assistant", "content": reply})
+        else:
+            st.error("❌ Failed to get response from Groq API.")
