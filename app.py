@@ -1,127 +1,117 @@
 import streamlit as st
 import requests
-import base64
+import os
 from datetime import datetime
 from werkzeug.security import check_password_hash
-import os
 
-# ========================
-# 🔐 Login System (Optional)
-# ========================
+# ---------------- CONFIG ----------------
+st.set_page_config(page_title="🤖 Smart Chatbot", layout="wide")
+
+# ---------------- SECRETS ----------------
+GROQ_API_KEY = st.secrets["GROQ_API_KEY"]  # Make sure this is in secrets.toml
+
+# Optional login credentials
+USERNAME = st.secrets.get("credentials", {}).get("username")
+PASSWORD_HASH = st.secrets.get("credentials", {}).get("password_hash")
+
+# ---------------- LOGIN ----------------
 def login():
-    if st.session_state.get("logged_in"):
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
+
+    if st.session_state.logged_in:
         return True
 
-    st.title("🔐 Login to SmartChatbot")
+    st.sidebar.title("🔐 Login")
+    username = st.sidebar.text_input("Username")
+    password = st.sidebar.text_input("Password", type="password")
+    skip = st.sidebar.checkbox("Skip login")
 
-    with st.form("login"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Login")
+    if skip:
+        st.session_state.logged_in = True
+        return True
 
-        if submitted:
-            valid_user = st.secrets["credentials"]["username"]
-            valid_hash = st.secrets["credentials"]["password_hash"]
+    if st.sidebar.button("Login"):
+        if username == USERNAME and check_password_hash(PASSWORD_HASH, password):
+            st.session_state.logged_in = True
+            st.success("✅ Login successful")
+            return True
+        else:
+            st.error("❌ Invalid username or password")
+    return False
 
-            if username == valid_user and check_password_hash(valid_hash, password):
-                st.session_state.logged_in = True
-                st.success("✅ Login successful!")
-                st.experimental_rerun()
-            else:
-                st.error("❌ Invalid username or password")
-
-    st.stop()
-
-if "skip_login" not in st.session_state:
-    if st.sidebar.button("🚪 Skip Login"):
-        st.session_state["logged_in"] = True
-        st.session_state["skip_login"] = True
-
-if not st.session_state.get("logged_in"):
-    login()
-
-# ========================
-# 🌙 Theme Switcher
-# ========================
-theme = st.sidebar.selectbox("🌈 Choose Theme", ["Light", "Dark"])
-if theme == "Dark":
-    st.markdown("""<style>body { background-color: #111; color: #eee; }</style>""", unsafe_allow_html=True)
-
-# ========================
-# 🌍 App Config & Setup
-# ========================
-st.set_page_config(page_title="Smart Chatbot", layout="wide")
-st.title("🤖 SmartChatbot + 🖼️ Image + 📎 Upload + 💾 Save Chat")
-
-# Groq & Stability
-GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-STABILITY_API_URL = "https://api.stability.ai/v1/generation/stable-diffusion-v1-5/text-to-image"
-
-# Chat state
-if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "system", "content": "You are a helpful assistant."}]
-
-# Display chat history
-for msg in st.session_state.messages[1:]:  # skip system prompt
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-
-# ========================
-# 🔍 Image Detection
-# ========================
-def is_image_prompt(text):
-    keywords = ["draw", "generate image", "show me", "picture of", "create image", "visualize"]
-    return any(k in text.lower() for k in keywords)
-
-# ========================
-# 🎨 Image Generator
-# ========================
-def generate_image(prompt):
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json"
+# ---------------- CHATBOT FUNCTION ----------------
+def groq_chat(prompt):
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": "mixtral-8x7b-32768",
+        "messages": [{"role": "user", "content": prompt}],
     }
-    json_data = {
-        "text_prompts": [{"text": prompt}],
-        "cfg_scale": 7,
-        "height": 512,
-        "width": 512,
-        "samples": 1,
-        "steps": 30
-    }
-    response = requests.post(STABILITY_API_URL, headers=headers, json=json_data)
-
+    response = requests.post(url, headers=headers, json=payload)
     if response.status_code == 200:
-        img_base64 = response.json()["artifacts"][0]["base64"]
-        return img_base64
+        return response.json()["choices"][0]["message"]["content"]
     else:
-        st.error("❌ Image generation failed.")
+        st.error(f"Error: {response.status_code} - {response.text}")
         return None
 
-# ========================
-# 📎 File Upload
-# ========================
-uploaded_files = st.sidebar.file_uploader("📁 Upload files", accept_multiple_files=True)
-if uploaded_files:
-    for file in uploaded_files:
-        st.sidebar.success(f"Uploaded: {file.name}")
+# ---------------- IMAGE GENERATION ----------------
+def generate_image(prompt):
+    url = "https://api.groq.com/openai/v1/images/generations"
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    payload = {"model": "dall-e-3", "prompt": prompt, "n": 1, "size": "512x512"}
+    response = requests.post(url, headers=headers, json=payload)
+    if response.status_code == 200:
+        return response.json()["data"][0]["url"]
+    else:
+        st.error(f"Image Error: {response.status_code} - {response.text}")
+        return None
 
-# ========================
-# 💬 Chat Input
-# ========================
-user_prompt = st.chat_input("Type your message here...")
+# ---------------- MAIN APP ----------------
+if login():
+    st.title("🤖 Smart Chatbot")
 
-if user_prompt:
-    # Display user message
-    with st.chat_message("user"):
-        st.markdown(user_prompt)
-    st.session_state.messages.append({"role": "user", "content": user_prompt})
+    # Initialize session state
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
 
-    # Image prompt
-    if is_image_prompt(user_prompt):
-        with st.chat_message("assistant"):
-            st.markdown("🖼 Generating image...")
-            image_data = generate_image(user_prompt)
-            if image_data:
-                st.image(base
+    # Sidebar
+    st.sidebar.header("⚙️ Options")
+    if st.sidebar.button("🆕 New Chat"):
+        st.session_state.chat_history = []
+    search_term = st.sidebar.text_input("🔍 Search in chats")
+
+    uploaded_file = st.sidebar.file_uploader("📂 Upload a file", type=["txt", "pdf", "docx"])
+    if uploaded_file:
+        st.sidebar.success(f"Uploaded: {uploaded_file.name}")
+
+    # Chat input
+    user_input = st.text_input("💬 Ask me something...")
+    if st.button("Send") and user_input:
+        answer = groq_chat(user_input)
+        if answer:
+            st.session_state.chat_history.append({"question": user_input, "answer": answer})
+
+    # Image generation
+    img_prompt = st.text_input("🎨 Image prompt")
+    if st.button("Generate Image") and img_prompt:
+        img_url = generate_image(img_prompt)
+        if img_url:
+            st.session_state.generated_image = img_url
+
+    # Show chat history
+    st.subheader("📜 Chat History")
+    for chat in st.session_state.chat_history:
+        if not search_term or search_term.lower() in chat["question"].lower() or search_term.lower() in chat["answer"].lower():
+            st.markdown(f"**You:** {chat['question']}")
+            st.markdown(f"**Bot:** {chat['answer']}")
+
+    # Show generated image
+    if "generated_image" in st.session_state:
+        st.image(st.session_state.generated_image, caption="Generated Image", use_column_width=True)
+
+    # Download chat
+    if st.session_state.chat_history:
+        chat_text = "\n\n".join([f"You: {c['question']}\nBot: {c['answer']}" for c in st.session_state.chat_history])
+        st.download_button("💾 Download Chat", data=chat_text, file_name=f"chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+
