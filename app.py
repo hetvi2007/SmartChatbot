@@ -8,7 +8,7 @@ from werkzeug.security import check_password_hash
 st.set_page_config(page_title="🤖 Smart Chatbot", layout="wide")
 
 # ---------------- SECRETS ----------------
-GROQ_API_KEY = st.secrets["GROQ_API_KEY"]  # Make sure this is in secrets.toml
+GROQ_API_KEY = st.secrets["GROQ_API_KEY"]  # from .streamlit/secrets.toml
 
 # Optional login credentials
 USERNAME = st.secrets.get("credentials", {}).get("username")
@@ -71,11 +71,10 @@ def generate_image(prompt):
 if login():
     st.title("🤖 Smart Chatbot")
 
-    # Initialize session state
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
-    # Sidebar
+    # Sidebar controls
     st.sidebar.header("⚙️ Options")
     if st.sidebar.button("🆕 New Chat"):
         st.session_state.chat_history = []
@@ -92,26 +91,25 @@ if login():
         if answer:
             st.session_state.chat_history.append({"question": user_input, "answer": answer})
 
-    # Image generation
+    # Image generation input
     img_prompt = st.text_input("🎨 Image prompt")
     if st.button("Generate Image") and img_prompt:
         img_url = generate_image(img_prompt)
         if img_url:
             st.session_state.generated_image = img_url
 
-    # Show chat history
+    # Display chat history
     st.subheader("📜 Chat History")
     for chat in st.session_state.chat_history:
         if not search_term or search_term.lower() in chat["question"].lower() or search_term.lower() in chat["answer"].lower():
             st.markdown(f"**You:** {chat['question']}")
             st.markdown(f"**Bot:** {chat['answer']}")
 
-    # Show generated image
+    # Display generated image
     if "generated_image" in st.session_state:
         st.image(st.session_state.generated_image, caption="Generated Image", use_column_width=True)
 
-    # Download chat
+    # Download chat history
     if st.session_state.chat_history:
         chat_text = "\n\n".join([f"You: {c['question']}\nBot: {c['answer']}" for c in st.session_state.chat_history])
         st.download_button("💾 Download Chat", data=chat_text, file_name=f"chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-
