@@ -6,7 +6,7 @@ from datetime import datetime
 # ===== PAGE CONFIG =====
 st.set_page_config(page_title="🤖 Smart Chatbot", page_icon="🤖", layout="wide")
 
-# ===== LOGIN SYSTEM (Optional) =====
+# ===== LOGIN SYSTEM =====
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
@@ -28,16 +28,16 @@ if not st.session_state.logged_in:
     login()
     st.stop()
 
-# ===== CHATBOT APP =====
+# ===== MAIN APP =====
 st.title("🤖 Smart Chatbot with Image Generation")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# ===== API Keys =====
+# ===== API CONFIG =====
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 GROQ_API_URL = "https://api.groq.com/v1/chat/completions"
-IMAGE_API_URL = "https://api.groq.com/v1/images/generate"  # Change if using OpenAI or another provider
+IMAGE_API_URL = "https://api.groq.com/v1/images/generate"  # Update if using a different provider
 
 # ===== CHAT INPUT =====
 user_input = st.text_input("💬 Your message:")
@@ -85,7 +85,13 @@ if st.button("Generate Image") and image_prompt:
     try:
         img_response = requests.post(IMAGE_API_URL, json=payload, headers=headers)
         img_response.raise_for_status()
-        image_url = img_response.json()["data"][0]["url"]
-        st.image(image_url, caption="Generated image", use_column_width=True)
+        img_data = img_response.json()
+
+        if "data" in img_data and len(img_data["data"]) > 0:
+            image_url = img_data["data"][0]["url"]
+            st.image(image_url, caption="Generated image", use_column_width=True)
+        else:
+            st.error("No image data returned from API.")
+
     except Exception as e:
         st.error(f"Error generating image: {e}")
