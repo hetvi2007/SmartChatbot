@@ -3,6 +3,9 @@ import requests
 import base64
 from datetime import datetime
 
+# ===== PAGE CONFIG =====
+st.set_page_config(page_title="🤖 Smart Chatbot", page_icon="🤖", layout="wide")
+
 # ===== LOGIN SYSTEM (Optional) =====
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -12,7 +15,10 @@ def login():
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
     if st.button("Login"):
-        if username == st.secrets["credentials"]["username"] and password == st.secrets["credentials"]["password"]:
+        if (
+            username == st.secrets["credentials"]["username"]
+            and password == st.secrets["credentials"]["password"]
+        ):
             st.session_state.logged_in = True
             st.success("Login successful!")
         else:
@@ -23,7 +29,6 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ===== CHATBOT APP =====
-st.set_page_config(page_title="🤖 Smart Chatbot", page_icon="🤖", layout="wide")
 st.title("🤖 Smart Chatbot with Image Generation")
 
 if "messages" not in st.session_state:
@@ -32,23 +37,24 @@ if "messages" not in st.session_state:
 # ===== API Keys =====
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 GROQ_API_URL = "https://api.groq.com/v1/chat/completions"
-IMAGE_API_URL = "https://api.groq.com/v1/images/generate"
+IMAGE_API_URL = "https://api.groq.com/v1/images/generate"  # Change if using OpenAI or another provider
 
 # ===== CHAT INPUT =====
 user_input = st.text_input("💬 Your message:")
 if st.button("Send") and user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
 
-    # Call Groq API for chatbot reply
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
     payload = {"model": "llama3-8b-8192", "messages": st.session_state.messages}
-    response = requests.post(GROQ_API_URL, json=payload, headers=headers)
-    
-    if response.status_code == 200:
-        bot_reply = response.json()["choices"][0]["message"]["content"]
+
+    try:
+        response = requests.post(GROQ_API_URL, json=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        bot_reply = data["choices"][0]["message"]["content"]
         st.session_state.messages.append({"role": "assistant", "content": bot_reply})
-    else:
-        st.error("Error contacting chatbot API.")
+    except Exception as e:
+        st.error(f"Error contacting chatbot API: {e}")
 
 # ===== DISPLAY CHAT HISTORY =====
 for msg in st.session_state.messages:
@@ -75,10 +81,11 @@ image_prompt = st.text_input("Enter an image description:")
 if st.button("Generate Image") and image_prompt:
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
     payload = {"prompt": image_prompt, "n": 1, "size": "512x512"}
-    img_response = requests.post(IMAGE_API_URL, json=payload, headers=headers)
 
-    if img_response.status_code == 200:
+    try:
+        img_response = requests.post(IMAGE_API_URL, json=payload, headers=headers)
+        img_response.raise_for_status()
         image_url = img_response.json()["data"][0]["url"]
         st.image(image_url, caption="Generated image", use_column_width=True)
-    else:
-        st.error("Error generating image.")
+    except Exception as e:
+        st.error(f"Error generating image: {e}")
