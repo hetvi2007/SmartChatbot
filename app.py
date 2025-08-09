@@ -1,97 +1,69 @@
 import streamlit as st
-import requests
-import base64
+import os
+import json
 from datetime import datetime
+from groq import Groq
+from PIL import Image
+import io
 
-# ===== PAGE CONFIG =====
-st.set_page_config(page_title="🤖 Smart Chatbot", page_icon="🤖", layout="wide")
+# ----------- SETTINGS -----------
+st.set_page_config(page_title="🤖 Smart Chatbot", layout="wide")
 
-# ===== LOGIN SYSTEM =====
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
+# ----------- AUTH (optional) -----------
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = True  # Set to True if you don’t want login
 
-def login():
-    st.title("🔐 Login")
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-    if st.button("Login"):
-        if (
-            username == st.secrets["credentials"]["username"]
-            and password == st.secrets["credentials"]["password"]
-        ):
-            st.session_state.logged_in = True
-            st.success("Login successful!")
-        else:
-            st.error("Invalid username or password")
+# ----------- SECRETS -----------
+GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 
-if not st.session_state.logged_in:
-    login()
-    st.stop()
+client = Groq(api_key=GROQ_API_KEY)
 
-# ===== MAIN APP =====
-st.title("🤖 Smart Chatbot with Image Generation")
-
+# ----------- SESSION STATE -----------
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# ===== API CONFIG =====
-GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-GROQ_API_URL = "https://api.groq.com/v1/chat/completions"
-IMAGE_API_URL = "https://api.groq.com/v1/images/generate"  # Update if using a different provider
+# ----------- SIDEBAR -----------
+with st.sidebar:
+    st.title("⚙️ Options")
+    theme = st.radio("Theme", ["Light", "Dark"])
+    if st.button("Download Chat History"):
+        if st.session_state.messages:
+            filename = f"chat_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            with open(filename, "w") as f:
+                json.dump(st.session_state.messages, f)
+            st.download_button("Download File", data=json.dumps(st.session_state.messages), file_name=filename)
+    uploaded_file = st.file_uploader("Upload a file", type=["txt", "pdf", "png", "jpg"])
 
-# ===== CHAT INPUT =====
-user_input = st.text_input("💬 Your message:")
+# ----------- MAIN CHAT UI -----------
+st.title("🤖 Smart Chatbot")
+user_input = st.text_input("Type your message:")
 if st.button("Send") and user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
 
-    headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
-    payload = {"model": "llama3-8b-8192", "messages": st.session_state.messages}
+    # Call LLM
+    completion = client.chat.completions.create(
+        model="llama3-8b-8192",
+        messages=[{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
+    )
+    reply = completion.choices[0].message["content"]
+    st.session_state.messages.append({"role": "assistant", "content": reply})
 
-    try:
-        response = requests.post(GROQ_API_URL, json=payload, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        bot_reply = data["choices"][0]["message"]["content"]
-        st.session_state.messages.append({"role": "assistant", "content": bot_reply})
-    except Exception as e:
-        st.error(f"Error contacting chatbot API: {e}")
-
-# ===== DISPLAY CHAT HISTORY =====
+# ----------- DISPLAY MESSAGES -----------
 for msg in st.session_state.messages:
     if msg["role"] == "user":
         st.markdown(f"**You:** {msg['content']}")
     else:
         st.markdown(f"**Bot:** {msg['content']}")
 
-# ===== DOWNLOAD CHAT HISTORY =====
-if st.button("📥 Download Chat History"):
-    chat_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
-    b64 = base64.b64encode(chat_text.encode()).decode()
-    href = f'<a href="data:file/txt;base64,{b64}" download="chat_history.txt">Download Chat</a>'
-    st.markdown(href, unsafe_allow_html=True)
+# ----------- IMAGE GENERATION FEATURE -----------
+st.subheader("🎨 Image Generator")
+img_prompt = st.text_input("Describe an image to generate:")
+if st.button("Generate Image") and img_prompt:
+    # Example: Use a fake image for now (replace with actual image generation API)
+    img = Image.new("RGB", (512, 512), color=(73, 109, 137))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
 
-# ===== FILE UPLOADS =====
-uploaded_file = st.file_uploader("📂 Upload a file", type=["txt", "pdf", "docx"])
-if uploaded_file:
-    st.success(f"Uploaded file: {uploaded_file.name}")
-
-# ===== IMAGE GENERATION =====
-st.subheader("🎨 Image Generation")
-image_prompt = st.text_input("Enter an image description:")
-if st.button("Generate Image") and image_prompt:
-    headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
-    payload = {"prompt": image_prompt, "n": 1, "size": "512x512"}
-
-    try:
-        img_response = requests.post(IMAGE_API_URL, json=payload, headers=headers)
-        img_response.raise_for_status()
-        img_data = img_response.json()
-
-        if "data" in img_data and len(img_data["data"]) > 0:
-            image_url = img_data["data"][0]["url"]
-            st.image(image_url, caption="Generated image", use_column_width=True)
-        else:
-            st.error("No image data returned from API.")
-
-    except Exception as e:
-        st.error(f"Error generating image: {e}")
+    # ✅ Fixed st.image line
+    st.image(buf, caption="Generated Image", use_column_width=True)
