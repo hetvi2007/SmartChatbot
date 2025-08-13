@@ -2,3 +2,5 @@ streamlit
 requests
 werkzeug
 openai
+groq
+
